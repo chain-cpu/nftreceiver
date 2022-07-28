@@ -1,7 +1,7 @@
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::token::{ self, Transfer, Mint, Token, TokenAccount};
 
 #[program]
 pub mod nftreceiver {
@@ -32,6 +32,7 @@ pub mod nftreceiver {
     }
 
     pub fn add_reward_config(ctx: Context<AddRewardConfig>, rarity: u8, set: u8, mana_cost: u64, reward_token: Pubkey) -> Result<()> {
+        msg!("Hello");
         let reward_config = &mut ctx.accounts.reward_config;
         reward_config.rarity = rarity;
         reward_config.set = set;
@@ -39,6 +40,99 @@ pub mod nftreceiver {
         reward_config.reward_token = reward_token.key().clone();
         Ok(())
     }
+
+
+    pub fn burn_nfts<'info>(ctx: Context<'_, '_, '_, 'info, BurnNfts<'info>>, nfts: Vec<NftData>) -> Result<()> {
+
+        let config = &ctx.accounts.config;
+        let iter = nfts.iter();
+        let mut flag = [0;12]; // 12 is mas color range
+        for (pos, nft) in iter.enumerate() {
+            let (_wl_config_pda, _wl_config_bump) = Pubkey::find_program_address(
+                &[
+                    b"wl-config".as_ref(), 
+                    nft.mint.key().as_ref(), 
+                    &[nft.color], 
+                    &[nft.rarity], 
+                    &[nft.set]
+                ], ctx.program_id);
+            let wl_config = & ctx.remaining_accounts[pos];
+            assert_eq!(wl_config.key(), _wl_config_pda, "nft {} is not in whitelist", pos);
+
+            // assert color is unique,
+            assert_eq!(flag[nft.color as usize], 0, "nft {} color is duplicated", pos);
+            flag[nft.color as usize] = 1;
+        }
+        
+        // TODO - generate rand value from 0 - 3
+        let rand = get_random().unwrap();        
+        // TODO - burn nft
+
+        // get reward config of nft[rand]
+        let lucky_nft = &nfts[rand];
+        let (_reward_config_pda, _reward_config_bump) = Pubkey::find_program_address(
+            &[
+                b"reward-config".as_ref(), 
+                &[lucky_nft.rarity], 
+                &[lucky_nft.set]
+            ], ctx.program_id);
+        let reward_config = match rand {
+            0 => &ctx.accounts.reward_config0,
+            1 => &ctx.accounts.reward_config1,
+            2 => &ctx.accounts.reward_config2,
+            3 => &ctx.accounts.reward_config3,
+            _ => &ctx.accounts.reward_config3,
+        };
+        
+        let reward_vault = match rand {
+            0 => &ctx.accounts.reward_vault0,
+            1 => &ctx.accounts.reward_vault1,
+            2 => &ctx.accounts.reward_vault2,
+            3 => &ctx.accounts.reward_vault3,
+            _ => &ctx.accounts.reward_vault3,
+        };
+
+        let user_reward_account = match rand {
+            0 => &ctx.accounts.user_reward_account0,
+            1 => &ctx.accounts.user_reward_account1,
+            2 => &ctx.accounts.user_reward_account2,
+            3 => &ctx.accounts.user_reward_account3,
+            _ => &ctx.accounts.user_reward_account3,
+        };
+        assert_eq!(reward_config.key(), _reward_config_pda);
+        // transfer mana
+        deposit_mana(
+            ctx.accounts.user_mana_account.to_account_info(),
+            ctx.accounts.pda_mana_account.to_account_info(),
+            ctx.accounts.payer.to_account_info(),
+            100,
+            ctx.accounts.token_program.to_account_info(),
+        )?;
+
+        let cpi_accounts = Transfer {
+            from: reward_vault.to_account_info(),
+            to: user_reward_account.to_account_info(),
+            authority: config.to_account_info(),
+        };
+
+        // // TODO - should set reward_token amount
+        // // transfer reward
+        // panic!("rand: {}", rand);
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info().clone(), 
+                cpi_accounts,
+                &[&[
+                    b"config".as_ref(),
+                    &[config.bump],
+                ]]
+            ),
+            100
+        )?;
+
+        Ok(())
+    }   
+
 }
 
 #[derive(Accounts)]
@@ -53,13 +147,21 @@ pub struct Initialize<'info> {
     config: Account<'info, Config>,
     #[account(
         init,
-        payer=deployer,
-        seeds=[b"mana-token", mana_token.key().as_ref()],
+        payer = deployer,
+        seeds = [b"mana-token", mana_token.key().as_ref()],
         bump,
-        token::mint=mana_token,
-        token::authority=config,
+        token::mint = mana_token,
+        token::authority = config,
     )]
     pda_mana_account: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        space = 8,
+        payer = deployer,
+        seeds = [b"wrong-pda"],
+        bump,
+    )]
+    wrong_pda: Account<'info, Wrong>,
     #[account(mut)]
     deployer: Signer<'info>,
     mana_token: Account<'info, Mint>,
@@ -102,11 +204,17 @@ pub struct AddRewardConfig<'info> {
     #[account(mut)]
     authority: Signer<'info>,
     #[account(
+        mut,
+        seeds = [b"config".as_ref()],
+        bump = config.bump,
+    )]
+    config: Account<'info, Config>,
+    #[account(
         constraint=reward_token_mint == reward_token.key()
     )]
     reward_token: Account<'info, Mint>,
     #[account(
-        init,
+        init_if_needed,
         payer = authority,
         space = 8 + 1 + 1 + 8 + 32,
         seeds = [b"reward-config".as_ref(), &[rarity], &[set]],
@@ -114,11 +222,11 @@ pub struct AddRewardConfig<'info> {
     )]
     reward_config: Account<'info, RewardConfig>,
     #[account(
-        init,
+        init_if_needed,
         payer = authority,
-        seeds = [b"reward-vault", reward_token.key().as_ref()],
-        token::mint=reward_token,
-        token::authority=reward_config,
+        seeds = [b"reward-vault".as_ref(), reward_token.key().as_ref()],
+        token::mint=reward_token, 
+        token::authority=config,
         bump,
     )]
     reward_vault: Account<'info, TokenAccount>,
@@ -128,8 +236,123 @@ pub struct AddRewardConfig<'info> {
 }
 
 #[derive(Accounts)]
-pub struct BurnNfts {
+#[instruction(nfts: Vec<NftData>)]
+pub struct BurnNfts<'info> {
+    #[account(
+        mut,
+        seeds=[b"config"],
+        bump=config.bump
+    )]
+    config: Account<'info, Config>,
+    payer: Signer<'info>,
+    #[account(
+        mut,
+        seeds=[b"mana-token", config.mana_token.key().as_ref()],
+        bump,
+        token::mint=config.mana_token,
+        token::authority=config,
+    )]
+    pda_mana_account: Account<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        token::mint=config.mana_token,
+        token::authority=payer,
+    )]
+    user_mana_account: Account<'info, TokenAccount>,
+
+    #[account(
+        seeds = [b"reward-config".as_ref(), &[nfts[0].rarity], &[nfts[0].set]],
+        bump,
+    )]
+    reward_config0: Account<'info, RewardConfig>,
+    
+    #[account(
+        seeds = [b"reward-config".as_ref(), &[nfts[1].rarity], &[nfts[1].set]],
+        bump,
+    )]
+    reward_config1: Account<'info, RewardConfig>,
+    
+    #[account(
+        seeds = [b"reward-config".as_ref(), &[nfts[2].rarity], &[nfts[2].set]],
+        bump,
+    )]
+    reward_config2: Account<'info, RewardConfig>,
+    
+    #[account(
+        seeds = [b"reward-config".as_ref(), &[nfts[3].rarity], &[nfts[3].set]],
+        bump,
+    )]
+    reward_config3: Account<'info, RewardConfig>,
+    
+    #[account(
+        mut,
+        seeds = [b"reward-vault", reward_config0.reward_token.key().as_ref()],
+        token::mint=reward_config0.reward_token.key(), 
+        token::authority=config,
+        bump,
+    )]
+    reward_vault0: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"reward-vault", reward_config1.reward_token.key().as_ref()],
+        token::mint=reward_config1.reward_token.key(), 
+        token::authority=config,
+        bump,
+    )]
+    reward_vault1: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"reward-vault", reward_config2.reward_token.key().as_ref()],
+        token::mint=reward_config2.reward_token.key(), 
+        token::authority=config,
+        bump,
+    )]
+    reward_vault2: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"reward-vault", reward_config3.reward_token.key().as_ref()],
+        token::mint=reward_config3.reward_token.key(), 
+        token::authority=config,
+        bump,
+    )]
+    reward_vault3: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint=reward_config0.reward_token.key(),
+        token::authority=payer
+    )]
+    user_reward_account0: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint=reward_config1.reward_token.key(),
+        token::authority=payer
+    )]
+    user_reward_account1: Box<Account<'info, TokenAccount>>,
+
+
+    #[account(
+        mut,
+        token::mint=reward_config2.reward_token.key(),
+        token::authority=payer
+    )]
+    user_reward_account2: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint=reward_config3.reward_token.key(),
+        token::authority=payer
+    )]
+    user_reward_account3: Box<Account<'info, TokenAccount>>,
+
+    system_program: Program<'info, System>,
+    token_program: Program<'info, Token>,
+    rent: Sysvar<'info, Rent>
 }
 
 #[account]
@@ -155,4 +378,50 @@ pub struct RewardConfig {
     set: u8,
     mana_cost: u64,
     reward_token: Pubkey,
+}
+
+#[account]
+pub struct Wrong {
+}
+
+
+#[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize)]
+pub struct NftData {
+    mint: Pubkey,
+    color: u8,
+    rarity: u8,
+    set: u8,   
+}
+
+
+
+fn deposit_mana<'info> (
+    user_mana_account: AccountInfo<'info>,
+    mana_vault: AccountInfo<'info>,
+    payer: AccountInfo<'info>,
+    amount: u64,
+    token_program: AccountInfo<'info>,
+
+) -> Result<()> {
+    let cpi_accounts = Transfer {
+        from: user_mana_account.to_account_info(),
+        to: mana_vault.to_account_info(),
+        authority: payer,
+    };
+    // TODO - should set reward_token amount
+    // transfer reward
+
+    token::transfer(
+        CpiContext::new(
+            token_program.to_account_info().clone(), 
+            cpi_accounts,
+        ),
+        100
+    )?;
+    Ok(())
+}
+
+fn get_random() -> Result<usize> {
+    // NOTE - For the test scripts, let it bedeterministic.
+    Ok(0)
 }

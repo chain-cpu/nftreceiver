@@ -1,7 +1,7 @@
 import * as anchor from "@project-serum/anchor";
 import { Program, } from "@project-serum/anchor";
 import { Nftreceiver } from "../target/types/nftreceiver";
-import {TOKEN_PROGRAM_ID, createMint, mintToChecked, createAssociatedTokenAccount, transferChecked} from "@solana/spl-token"
+import {TOKEN_PROGRAM_ID, createMint, mintToChecked, createAssociatedTokenAccount, getOrCreateAssociatedTokenAccount, transferChecked, revokeInstructionData} from "@solana/spl-token"
 import {PublicKey} from "@solana/web3.js"
 import { config, expect } from "chai";
 
@@ -101,8 +101,6 @@ describe("nftreceiver", () => {
   
     
     // create NFT collection 
-    const userManaBalance = await provider.connection.getTokenAccountBalance(userManaAccount);
-    console.log("userManaBalance", userManaBalance);
   })
 
   it("Initialize Program", async () => {
@@ -115,12 +113,14 @@ describe("nftreceiver", () => {
       program.programId
     );
     
+    const [_wrongPda, _wrongBump] = await getWrongPda();
+
     configPDA = _configPDA;
     pdaManaAccount = _manaPDA;
     
     // invoke initialize method (manatoken)
     const tx = await program.methods.initialize()
-    .accounts({config: configPDA, deployer:deployerKeyPair.publicKey, manaToken: mintMana, pdaManaAccount})
+    .accounts({config: configPDA, wrongPda: _wrongPda as anchor.web3.PublicKey, deployer:deployerKeyPair.publicKey, manaToken: mintMana, pdaManaAccount})
     .signers([deployerKeyPair])
     .rpc();
 
@@ -141,56 +141,145 @@ describe("nftreceiver", () => {
     expect(configPdaData.authority.toString()).to.be.equal(authorityKeyPair.publicKey.toString());
 
   })
-
   it("Add WL", async () => {
     const mint = mintNFT;
     const color = 0;
     const set = 0;
     const rarity = 1;
-    const [_wlConfigPDA, _] = await getWLConfigPda(mint, color, rarity, set);
-
-    await addWlConfig(mint, color, rarity, set);
-    // return;
-    const wlConfig = await getWLConfig(mint, color, rarity, set);
-    expect(wlConfig.mint.toString()).to.be.equal(mint.toString());
-    expect(wlConfig.color).to.be.equal(color);
-    expect(wlConfig.set).to.be.equal(set);
-    expect(wlConfig.rarity).to.be.equal(rarity);
-
-    await addWlConfig(mint, 1, rarity, 0);
-    await addWlConfig(mint, 2, rarity, 1);
-    await addWlConfig(mint, 3, rarity, 1);
-    await addWlConfig(mint, 4, rarity, 0);
-
-  })
-
-  it("Add reward Config", async() => {
-    const rarity = 0;
-    const manaCost = new anchor.BN(100);
-    await addRewardConfig(rarity, 0, manaCost, mintA);
-    await addRewardConfig(rarity, 1, manaCost, mintB);
-    let rewardConfigData1 = await getRewardConfig(rarity, 0);
-    let rewardConfigData2 = await getRewardConfig(rarity, 1);
-
-    expect(rewardConfigData1.manaCost.toString()).to.be.equal(manaCost.toString());
-    expect(rewardConfigData1.rewardToken.toString()).to.be.equal(mintA.toString());
-
-    expect(rewardConfigData2.manaCost.toString()).to.be.equal(manaCost.toString());
-    expect(rewardConfigData2.rewardToken.toString()).to.be.equal(mintB.toString());
-
+    const whiteList = [
+      {mint: mintNFT, color: 0, rarity: 0, set: 0},
+      {mint: mintNFT, color: 0, rarity: 0, set: 1},
+      {mint: mintNFT, color: 1, rarity: 0, set: 0},
+      {mint: mintNFT, color: 1, rarity: 0, set: 1},
+      {mint: mintNFT, color: 2, rarity: 0, set: 0},
+      {mint: mintNFT, color: 2, rarity: 0, set: 1},
+      {mint: mintNFT, color: 3, rarity: 0, set: 0},
+      {mint: mintNFT, color: 3, rarity: 0, set: 1},
+    ];
+    for(let i in whiteList) {
+      const wlConfig = whiteList[i];
+      await addWlConfig(wlConfig.mint, wlConfig.color, wlConfig.rarity, wlConfig.set);
+    }
+    const testConfig = whiteList[0];
+    const wlConfig = await getWlConfig(testConfig.mint, testConfig.color, testConfig.rarity, testConfig.set);
+    expect(wlConfig.mint.toString()).to.be.equal(testConfig.mint.toString());
+    expect(wlConfig.color).to.be.equal(testConfig.color);
+    expect(wlConfig.rarity).to.be.equal(testConfig.rarity);
+    expect(wlConfig.set).to.be.equal(testConfig.set);
     
   })
 
-  it("Burn", async () => {
+  it("Add reward Config", async() => {
+    const rewardConfigList = [
+      {rarity: 0, set: 0, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 0, set: 1, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 0, set: 2, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 1, set: 0, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 1, set: 1, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 1, set: 2, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 2, set: 0, manaCost: new anchor.BN(100), rewardToken:mintA},
+      {rarity: 2, set: 1, manaCost: new anchor.BN(100), rewardToken:mintA},
+    ];
+
+    for(let i in rewardConfigList) {
+      const rewardConfig = rewardConfigList[i];
+      await addRewardConfig(
+        rewardConfig.rarity, 
+        rewardConfig.set, 
+        rewardConfig.manaCost, 
+        rewardConfig.rewardToken
+      );
+    }
+
+    const testConfig = rewardConfigList[0];
+    const rewardConfig = await getRewardConfig(testConfig.rarity, testConfig.set);
+
+    expect(rewardConfig.rarity).to.be.equal(testConfig.rarity);
+    expect(rewardConfig.set).to.be.equal(testConfig.set);
+    expect(rewardConfig.manaCost.toString()).to.be.equal(testConfig.manaCost.toString());
+    expect(rewardConfig.rewardToken.toString()).to.be.equal(testConfig.rewardToken.toString());
+
+  })
+
+  it("Burn Success", async () => {
+    
     let nfts = [
-      {mint: mintNFT, rarity: 0, set: 0, color: 0},
-      {mint: mintNFT, rarity: 0, set: 1, color: 1},
-      {mint: mintNFT, rarity: 0, set: 1, color: 2},
-      {mint: mintNFT, rarity: 0, set: 3, color: 3},
-    ]  
-    // invoke upgrade(nft1, nft2, nft3, nft4, mana_account,reward_account)
-    // check if it has receivced reward_token
-    // check if it has consumed mana token
+      {mint: mintNFT, color: 0, rarity: 0, set: 0},
+      {mint: mintNFT, color: 1, rarity: 0, set: 0},
+      {mint: mintNFT, color: 2, rarity: 0, set: 0},
+      {mint: mintNFT, color: 3, rarity: 0, set: 0},
+    ];
+    
+    const [_configPda, _configBump] = await getConfigPda();
+    
+    const rewardConfigs = await Promise.all(
+         nfts.map(async (nft) => {
+          const [_rewardConfigPda, _rewardConfigBump] = await getRewardConfigPda(nft.rarity, nft.set);
+          return _rewardConfigPda;
+         })
+    );
+
+    const rewardVaults = await Promise.all(
+      nfts.map(async (nft) => {
+        const rewardConfig = await getRewardConfig(nft.rarity, nft.set);
+        const [_rewardVaultPda, _] = await getRewardVaultPda(nft.rarity, nft.set, rewardConfig.rewardToken)
+        return _rewardVaultPda;
+      })
+    );
+
+    const userRewardAccounts = await Promise.all(
+      nfts.map(async (nft) => {
+        const rewardConfig = await getRewardConfig(nft.rarity, nft.set);
+
+        const rewardAccount = await getOrCreateAssociatedTokenAccount(program.provider.connection, userKeyPair, rewardConfig.rewardToken, userKeyPair.publicKey);
+
+        return rewardAccount;
+      })
+    );
+    
+    const wlConfigs = await Promise.all(
+         nfts.map(async (nft) => {
+          const [_rewardConfigPda, _rewardConfigBump] = await getWlConfigPda(nft.mint, nft.color, nft.rarity, nft.set);
+          return {pubkey: _rewardConfigPda as anchor.web3.PublicKey, isSigner: false, isWritable: false};
+         })
+    );
+
+    try {
+      await program.methods.burnNfts(nfts)
+      .accounts({
+        config: _configPda as anchor.web3.PublicKey,
+        payer :  userKeyPair.publicKey,
+        pdaManaAccount: pdaManaAccount,
+        userManaAccount: userManaAccount,
+        rewardConfig0: rewardConfigs[0] as anchor.web3.PublicKey,
+        rewardConfig1: rewardConfigs[1] as anchor.web3.PublicKey,
+        rewardConfig2: rewardConfigs[2] as anchor.web3.PublicKey,
+        rewardConfig3: rewardConfigs[3] as anchor.web3.PublicKey,
+        rewardVault0: rewardVaults[0] as anchor.web3.PublicKey,
+        rewardVault1: rewardVaults[1] as anchor.web3.PublicKey,
+        rewardVault2: rewardVaults[2] as anchor.web3.PublicKey,
+        rewardVault3: rewardVaults[3] as anchor.web3.PublicKey,
+        userRewardAccount0: userRewardAccounts[0].address as anchor.web3.PublicKey,
+        userRewardAccount1: userRewardAccounts[1].address as anchor.web3.PublicKey,
+        userRewardAccount2: userRewardAccounts[2].address as anchor.web3.PublicKey,
+        userRewardAccount3: userRewardAccounts[3].address as anchor.web3.PublicKey,
+      })
+      .remainingAccounts(wlConfigs)
+      .signers([userKeyPair])
+      .rpc();
+    } catch (error) {
+      console.log(error);
+    }
+    
+
+    
+    const userManaBalance = await provider.connection.getTokenAccountBalance(userManaAccount);
+
+    const userRewardBalance = await provider.connection.getTokenAccountBalance(userRewardAccounts[0].address);
+    
+    expect(userRewardBalance.value.amount).to.be.equal("100");
+    expect(userManaBalance.value.amount).to.be.equal("0");
+    
 
   })
 
@@ -201,7 +290,7 @@ describe("nftreceiver", () => {
     .rpc()
   }
   async function addWlConfig(mint, color, rarity, set) {
-    const [_wlConfigPDA, _] = await getWLConfigPda(mint, color, rarity, set);
+    const [_wlConfigPDA, _] = await getWlConfigPda(mint, color, rarity, set);
 
     await program.methods.addWlConfig(mint, color, rarity, set)
     .accounts({wlConfig: _wlConfigPDA as anchor.web3.PublicKey, authority: authorityKeyPair.publicKey})
@@ -209,7 +298,7 @@ describe("nftreceiver", () => {
     .rpc()
   }
 
-  async function getWLConfigPda(mint: anchor.web3.PublicKey, color, rarity, set) {
+  async function getWlConfigPda(mint: anchor.web3.PublicKey, color, rarity, set) {
     const [_wlConfigPda, _wlConfigBump] = await PublicKey.findProgramAddress(
       //@ts-ignore
       [Buffer.from(anchor.utils.bytes.utf8.encode("wl-config")), mint.toBuffer(), Buffer.from([color]), Buffer.from([rarity]), Buffer.from([set])],
@@ -217,18 +306,32 @@ describe("nftreceiver", () => {
     );
     return [_wlConfigPda as anchor.web3.PublicKey, _wlConfigBump];
   }
-  async function getWLConfig(mint, color, rarity, set) {
-    const [_wlConfigPda, _wlConfigBump] = await getWLConfigPda(mint, color, rarity, set);
-    const wlConfig = await program.account.wlConfig.fetch(_wlConfigPda as anchor.web3.PublicKey);
-    return wlConfig;
+
+  async function getWrongPda() {
+    const [_wrongPda, _wrongBump] = await PublicKey.findProgramAddress(
+      //@ts-ignore
+      [Buffer.from(anchor.utils.bytes.utf8.encode("wrong-pda"))],
+      program.programId
+    );
+    return [_wrongPda as anchor.web3.PublicKey, _wrongBump];
+  }
+
+
+  async function getConfig() {
+    const [_configPda, _configBump] = await PublicKey.findProgramAddress(
+      //@ts-ignore
+      [Buffer.from(anchor.utils.bytes.utf8.encode("config"))],
+      program.programId
+    );
+    return [_configPda as anchor.web3.PublicKey, _configBump];
   }
 
   async function addRewardConfig(rarity, set, manaCost, rewardToken: anchor.web3.PublicKey) {
     const [_rewardConfigPda, _rewardConfigBump] = await getRewardConfigPda(rarity, set);
     const [_rewardVaultPda, _rewardVaultBump] = await getRewardVaultPda(rarity, set, rewardToken);
-
+    const [_configPda, _] = await getConfigPda();
     await program.methods.addRewardConfig(rarity, set, manaCost, rewardToken)
-    .accounts({authority: authorityKeyPair.publicKey, rewardToken: rewardToken, rewardConfig: _rewardConfigPda as anchor.web3.PublicKey, rewardVault: _rewardVaultPda})
+    .accounts({config: _configPda as anchor.web3.PublicKey, authority: authorityKeyPair.publicKey, rewardToken: rewardToken, rewardConfig: _rewardConfigPda as anchor.web3.PublicKey, rewardVault: _rewardVaultPda})
     .signers([authorityKeyPair]).rpc();
 
     // should provide initial supply to reward_vault_pda
@@ -242,6 +345,14 @@ describe("nftreceiver", () => {
       /* decimals: */ 0
     );
     
+  }
+
+  async function getConfigPda() {
+    const [_configPda, _configBump] = await PublicKey.findProgramAddress(
+      [Buffer.from(anchor.utils.bytes.utf8.encode("config"))],
+      program.programId
+    );
+    return [_configPda as anchor.web3.PublicKey, _configBump];
   }
 
   async function getRewardConfigPda(rarity, set) {
@@ -264,4 +375,11 @@ describe("nftreceiver", () => {
     const rewardConfig = await program.account.rewardConfig.fetch(_rewardConfigPda as anchor.web3.PublicKey);
     return rewardConfig;
   }
+
+  async function getWlConfig(mint, color, rarity, set) {
+    const [_wlConfigPda, _wlConfigBump] = await getWlConfigPda(mint, color, rarity, set);
+    const wlConfig = await program.account.wlConfig.fetch(_wlConfigPda as anchor.web3.PublicKey);
+    return wlConfig;
+  }
+
 });
