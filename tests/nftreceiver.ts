@@ -1,7 +1,7 @@
 import * as anchor from "@project-serum/anchor";
 import { Program, } from "@project-serum/anchor";
 import { Nftreceiver } from "../target/types/nftreceiver";
-import {TOKEN_PROGRAM_ID, createMint, mintToChecked, createAssociatedTokenAccount, getOrCreateAssociatedTokenAccount, transferChecked, revokeInstructionData} from "@solana/spl-token"
+import {TOKEN_PROGRAM_ID, createMint, mintToChecked, setAuthority, createAssociatedTokenAccount, getOrCreateAssociatedTokenAccount, transferChecked, revokeInstructionData} from "@solana/spl-token"
 import {PublicKey} from "@solana/web3.js"
 import { config, expect } from "chai";
 
@@ -23,6 +23,7 @@ describe("nftreceiver", () => {
   let configPDA = null as PublicKey;
   let pdaManaAccount = null as PublicKey;
   let userManaAccount = null as PublicKey;
+  let userNftAccount = null as PublicKey;
 
   let userAAccount = null as PublicKey;
   let userBBaccount = null as PublicKey;
@@ -77,7 +78,7 @@ describe("nftreceiver", () => {
       /* freezeAuthority: */ null,
       /* decimals: */ 0    
     );
-
+    
     // create mana tokenAccount of user
     userManaAccount = await createAssociatedTokenAccount(
       /* connection: */ provider.connection,
@@ -86,6 +87,13 @@ describe("nftreceiver", () => {
       /* account: */ userKeyPair.publicKey
     );
   
+    // create nf tokenAccount of user
+    userNftAccount = await createAssociatedTokenAccount(
+      /* connection: */ provider.connection,
+      /* payer: */ deployerKeyPair,
+      /* mint: */ mintNFT,
+      /* account: */ userKeyPair.publicKey
+    );
     // mint initial supply of mintMana (to user), mintA (to program account), mintB (program account)
     await mintToChecked(
       /* connection: */ provider.connection,
@@ -94,6 +102,17 @@ describe("nftreceiver", () => {
       /* receiver: */ userManaAccount,
       /* authority: */ deployerKeyPair,
       /* amount: */ 100,
+      /* decimals: */ 0
+    );
+
+    // initial supply of mintNFT
+    await mintToChecked(
+      /* connection: */ provider.connection,
+      /* payer: */ deployerKeyPair,
+      /* mint: */ mintNFT,
+      /* receiver: */ userNftAccount,
+      /* authority: */ deployerKeyPair,
+      /* amount: */ 4,
       /* decimals: */ 0
     );
 
@@ -129,6 +148,16 @@ describe("nftreceiver", () => {
 
     expect(configPdaData.manaToken.toString()).to.be.equal(mintMana.toString());
     expect(configPdaData.authority.toString()).to.be.equal(deployerKeyPair.publicKey.toString());
+
+
+    // setAuthority(
+    //   /* connection: */ provider.connection,
+    //   /* payer: */ deployerKeyPair,
+    //   /* account: */ mintNFT,
+    //   /* currentAuthority: */ deployerKeyPair,
+    //   /* authorityType: */ 0,
+    //   /* newAuthority: */ _configPDA,
+    // )
 
   });
 
@@ -263,6 +292,8 @@ describe("nftreceiver", () => {
         userRewardAccount1: userRewardAccounts[1].address as anchor.web3.PublicKey,
         userRewardAccount2: userRewardAccounts[2].address as anchor.web3.PublicKey,
         userRewardAccount3: userRewardAccounts[3].address as anchor.web3.PublicKey,
+        mintNft: mintNFT,
+        userNftAccount: userNftAccount,
       })
       .remainingAccounts(wlConfigs)
       .signers([userKeyPair])
@@ -274,11 +305,13 @@ describe("nftreceiver", () => {
 
     
     const userManaBalance = await provider.connection.getTokenAccountBalance(userManaAccount);
+    const userNftBalance = await provider.connection.getTokenAccountBalance(userNftAccount);
 
     const userRewardBalance = await provider.connection.getTokenAccountBalance(userRewardAccounts[0].address);
     
     expect(userRewardBalance.value.amount).to.be.equal("100");
     expect(userManaBalance.value.amount).to.be.equal("0");
+    expect(userNftBalance.value.amount).to.be.equal("0");
     
 
   })

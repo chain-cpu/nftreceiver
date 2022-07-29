@@ -1,7 +1,7 @@
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{ self, Transfer, Mint, Token, TokenAccount};
+use anchor_spl::token::{ self, Transfer, Mint, Token, TokenAccount, Burn};
 
 #[program]
 pub mod nftreceiver {
@@ -47,6 +47,9 @@ pub mod nftreceiver {
         let config = &ctx.accounts.config;
         let iter = nfts.iter();
         let mut flag = [0;12]; // 12 is mas color range
+        let rarity = &nfts[0].rarity;
+        let mint = &mut ctx.accounts.mint_nft;
+        
         for (pos, nft) in iter.enumerate() {
             let (_wl_config_pda, _wl_config_bump) = Pubkey::find_program_address(
                 &[
@@ -62,8 +65,12 @@ pub mod nftreceiver {
             // assert color is unique,
             assert_eq!(flag[nft.color as usize], 0, "nft {} color is duplicated", pos);
             flag[nft.color as usize] = 1;
+            // assert rarity is same
+            assert_eq!(rarity, &nft.rarity, "nft {} rarity is different", pos);
+
+            // TODO - should validate mint
         }
-        
+
         // TODO - generate rand value from 0 - 3
         let rand = get_random().unwrap();        
         // TODO - burn nft
@@ -76,6 +83,7 @@ pub mod nftreceiver {
                 &[lucky_nft.rarity], 
                 &[lucky_nft.set]
             ], ctx.program_id);
+
         let reward_config = match rand {
             0 => &ctx.accounts.reward_config0,
             1 => &ctx.accounts.reward_config1,
@@ -99,13 +107,14 @@ pub mod nftreceiver {
             3 => &ctx.accounts.user_reward_account3,
             _ => &ctx.accounts.user_reward_account3,
         };
+
         assert_eq!(reward_config.key(), _reward_config_pda);
         // transfer mana
         deposit_mana(
             ctx.accounts.user_mana_account.to_account_info(),
             ctx.accounts.pda_mana_account.to_account_info(),
             ctx.accounts.payer.to_account_info(),
-            100,
+            reward_config.mana_cost,
             ctx.accounts.token_program.to_account_info(),
         )?;
 
@@ -115,6 +124,16 @@ pub mod nftreceiver {
             authority: config.to_account_info(),
         };
 
+        let burn_cpi_accounts = Burn {
+            mint: ctx.accounts.mint_nft.to_account_info().clone(),
+            from: ctx.accounts.user_nft_account.to_account_info().clone(),
+            authority: ctx.accounts.payer.to_account_info(),
+        };
+
+        token::burn(CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            burn_cpi_accounts,
+        ), 4);
         // // TODO - should set reward_token amount
         // // transfer reward
         // panic!("rand: {}", rand);
@@ -244,6 +263,7 @@ pub struct BurnNfts<'info> {
         bump=config.bump
     )]
     config: Account<'info, Config>,
+    #[account(mut)]
     payer: Signer<'info>,
     #[account(
         mut,
@@ -349,6 +369,16 @@ pub struct BurnNfts<'info> {
         token::authority=payer
     )]
     user_reward_account3: Box<Account<'info, TokenAccount>>,
+
+    #[account(mut)]
+    mint_nft: Box<Account<'info, Mint>>,
+
+    #[account(
+        mut,
+        token::mint=nfts[0].mint.key(),
+        token::authority=payer,
+    )]
+    user_nft_account: Box<Account<'info, TokenAccount>>,
 
     system_program: Program<'info, System>,
     token_program: Program<'info, Token>,
