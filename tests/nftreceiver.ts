@@ -14,7 +14,7 @@ describe("nftreceiver", () => {
   let mintA = null as PublicKey;
   let mintB = null as PublicKey;
 
-  let mintNFT = null as PublicKey;
+  let mintNFTs = [null, null, null, null];
 
   const deployerKeyPair = anchor.web3.Keypair.generate();
   const authorityKeyPair = anchor.web3.Keypair.generate();
@@ -23,7 +23,7 @@ describe("nftreceiver", () => {
   let configPDA = null as PublicKey;
   let pdaManaAccount = null as PublicKey;
   let userManaAccount = null as PublicKey;
-  let userNftAccount = null as PublicKey;
+  let userNftAccounts = []
 
   let userAAccount = null as PublicKey;
   let userBBaccount = null as PublicKey;
@@ -54,14 +54,40 @@ describe("nftreceiver", () => {
       null,
       0
     ); 
+    mintNFTs = await Promise.all(
+      mintNFTs.map(async nft => {
+        const mint = await createMint(
+          provider.connection,
+          deployerKeyPair,
+          deployerKeyPair.publicKey,
+          null,
+          0
+        ); 
 
-    mintNFT = await createMint(
-      provider.connection,
-      deployerKeyPair,
-      deployerKeyPair.publicKey,
-      null,
-      0
-    ); 
+        return mint;
+      })
+    );
+    userNftAccounts = await Promise.all(mintNFTs.map(async mint => {
+
+        // create nf tokenAccount of user
+        const userNftAccount = await createAssociatedTokenAccount(
+          /* connection: */ provider.connection,
+          /* payer: */ deployerKeyPair,
+          /* mint: */ mint,
+          /* account: */ userKeyPair.publicKey
+        );
+        // initial supply of mintNFT
+        await mintToChecked(
+          /* connection: */ provider.connection,
+          /* payer: */ deployerKeyPair,
+          /* mint: */ mint,
+          /* receiver: */ userNftAccount,
+          /* authority: */ deployerKeyPair,
+          /* amount: */ 1,
+          /* decimals: */ 0
+        );
+        return userNftAccount;
+    }));
 
     mintA = await createMint(
       provider.connection,
@@ -87,13 +113,7 @@ describe("nftreceiver", () => {
       /* account: */ userKeyPair.publicKey
     );
   
-    // create nf tokenAccount of user
-    userNftAccount = await createAssociatedTokenAccount(
-      /* connection: */ provider.connection,
-      /* payer: */ deployerKeyPair,
-      /* mint: */ mintNFT,
-      /* account: */ userKeyPair.publicKey
-    );
+
     // mint initial supply of mintMana (to user), mintA (to program account), mintB (program account)
     await mintToChecked(
       /* connection: */ provider.connection,
@@ -105,17 +125,7 @@ describe("nftreceiver", () => {
       /* decimals: */ 0
     );
 
-    // initial supply of mintNFT
-    await mintToChecked(
-      /* connection: */ provider.connection,
-      /* payer: */ deployerKeyPair,
-      /* mint: */ mintNFT,
-      /* receiver: */ userNftAccount,
-      /* authority: */ deployerKeyPair,
-      /* amount: */ 4,
-      /* decimals: */ 0
-    );
-
+    
     // create mana, tokenA, tokenB account of the program (PDA)
   
     
@@ -171,19 +181,15 @@ describe("nftreceiver", () => {
 
   })
   it("Add WL", async () => {
-    const mint = mintNFT;
-    const color = 0;
-    const set = 0;
-    const rarity = 1;
     const whiteList = [
-      {mint: mintNFT, color: 0, rarity: 0, set: 0},
-      {mint: mintNFT, color: 0, rarity: 0, set: 1},
-      {mint: mintNFT, color: 1, rarity: 0, set: 0},
-      {mint: mintNFT, color: 1, rarity: 0, set: 1},
-      {mint: mintNFT, color: 2, rarity: 0, set: 0},
-      {mint: mintNFT, color: 2, rarity: 0, set: 1},
-      {mint: mintNFT, color: 3, rarity: 0, set: 0},
-      {mint: mintNFT, color: 3, rarity: 0, set: 1},
+      {mint: mintNFTs[0], color: 0, rarity: 0, set: 0},
+      {mint: mintNFTs[0], color: 0, rarity: 0, set: 1},
+      {mint: mintNFTs[1], color: 1, rarity: 0, set: 0},
+      {mint: mintNFTs[1], color: 1, rarity: 0, set: 1},
+      {mint: mintNFTs[2], color: 2, rarity: 0, set: 0},
+      {mint: mintNFTs[2], color: 2, rarity: 0, set: 1},
+      {mint: mintNFTs[3], color: 3, rarity: 0, set: 0},
+      {mint: mintNFTs[3], color: 3, rarity: 0, set: 1},
     ];
     for(let i in whiteList) {
       const wlConfig = whiteList[i];
@@ -219,7 +225,7 @@ describe("nftreceiver", () => {
         rewardConfig.rewardToken
       );
     }
-
+    // return;
     const testConfig = rewardConfigList[0];
     const rewardConfig = await getRewardConfig(testConfig.rarity, testConfig.set);
 
@@ -231,12 +237,11 @@ describe("nftreceiver", () => {
   })
 
   it("Burn Success", async () => {
-    
     let nfts = [
-      {mint: mintNFT, color: 0, rarity: 0, set: 0},
-      {mint: mintNFT, color: 1, rarity: 0, set: 0},
-      {mint: mintNFT, color: 2, rarity: 0, set: 0},
-      {mint: mintNFT, color: 3, rarity: 0, set: 0},
+      {mint: mintNFTs[0], color: 0, rarity: 0, set: 0},
+      {mint: mintNFTs[1], color: 1, rarity: 0, set: 0},
+      {mint: mintNFTs[2], color: 2, rarity: 0, set: 0},
+      {mint: mintNFTs[3], color: 3, rarity: 0, set: 0},
     ];
     
     const [_configPda, _configBump] = await getConfigPda();
@@ -292,8 +297,14 @@ describe("nftreceiver", () => {
         userRewardAccount1: userRewardAccounts[1].address as anchor.web3.PublicKey,
         userRewardAccount2: userRewardAccounts[2].address as anchor.web3.PublicKey,
         userRewardAccount3: userRewardAccounts[3].address as anchor.web3.PublicKey,
-        mintNft: mintNFT,
-        userNftAccount: userNftAccount,
+        mintNft0: mintNFTs[0],
+        mintNft1: mintNFTs[1],
+        mintNft2: mintNFTs[2],
+        mintNft3: mintNFTs[3],
+        userNftAccount0: userNftAccounts[0],
+        userNftAccount1: userNftAccounts[1],
+        userNftAccount2: userNftAccounts[2],
+        userNftAccount3: userNftAccounts[3],
       })
       .remainingAccounts(wlConfigs)
       .signers([userKeyPair])
@@ -305,13 +316,15 @@ describe("nftreceiver", () => {
 
     
     const userManaBalance = await provider.connection.getTokenAccountBalance(userManaAccount);
-    const userNftBalance = await provider.connection.getTokenAccountBalance(userNftAccount);
 
     const userRewardBalance = await provider.connection.getTokenAccountBalance(userRewardAccounts[0].address);
-    
+
     expect(userRewardBalance.value.amount).to.be.equal("100");
     expect(userManaBalance.value.amount).to.be.equal("0");
-    expect(userNftBalance.value.amount).to.be.equal("0");
+    for(let i in nfts) {
+      const userNftBalance = await provider.connection.getTokenAccountBalance(userNftAccounts[0]);
+      expect(userNftBalance.value.amount).to.be.equal("0");
+    }
     
 
   })
@@ -360,13 +373,20 @@ describe("nftreceiver", () => {
   }
 
   async function addRewardConfig(rarity, set, manaCost, rewardToken: anchor.web3.PublicKey) {
+
     const [_rewardConfigPda, _rewardConfigBump] = await getRewardConfigPda(rarity, set);
     const [_rewardVaultPda, _rewardVaultBump] = await getRewardVaultPda(rarity, set, rewardToken);
     const [_configPda, _] = await getConfigPda();
     await program.methods.addRewardConfig(rarity, set, manaCost, rewardToken)
-    .accounts({config: _configPda as anchor.web3.PublicKey, authority: authorityKeyPair.publicKey, rewardToken: rewardToken, rewardConfig: _rewardConfigPda as anchor.web3.PublicKey, rewardVault: _rewardVaultPda})
+    .accounts({
+      config: _configPda as anchor.web3.PublicKey, 
+      authority: authorityKeyPair.publicKey, 
+      rewardToken: rewardToken, 
+      rewardConfig: _rewardConfigPda as anchor.web3.PublicKey, 
+      rewardVault: _rewardVaultPda as anchor.web3.PublicKey,
+    })
     .signers([authorityKeyPair]).rpc();
-
+    
     // should provide initial supply to reward_vault_pda
     await mintToChecked(
       /* connection: */ provider.connection,

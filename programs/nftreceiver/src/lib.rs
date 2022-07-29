@@ -32,7 +32,6 @@ pub mod nftreceiver {
     }
 
     pub fn add_reward_config(ctx: Context<AddRewardConfig>, rarity: u8, set: u8, mana_cost: u64, reward_token: Pubkey) -> Result<()> {
-        msg!("Hello");
         let reward_config = &mut ctx.accounts.reward_config;
         reward_config.rarity = rarity;
         reward_config.set = set;
@@ -48,7 +47,6 @@ pub mod nftreceiver {
         let iter = nfts.iter();
         let mut flag = [0;12]; // 12 is mas color range
         let rarity = &nfts[0].rarity;
-        let mint = &mut ctx.accounts.mint_nft;
         
         for (pos, nft) in iter.enumerate() {
             let (_wl_config_pda, _wl_config_bump) = Pubkey::find_program_address(
@@ -67,8 +65,6 @@ pub mod nftreceiver {
             flag[nft.color as usize] = 1;
             // assert rarity is same
             assert_eq!(rarity, &nft.rarity, "nft {} rarity is different", pos);
-
-            // TODO - should validate mint
         }
 
         // TODO - generate rand value from 0 - 3
@@ -117,6 +113,32 @@ pub mod nftreceiver {
             reward_config.mana_cost,
             ctx.accounts.token_program.to_account_info(),
         )?;
+        let mint_nfts = [
+            &ctx.accounts.mint_nft0, 
+            &ctx.accounts.mint_nft1,
+            &ctx.accounts.mint_nft2,
+            &ctx.accounts.mint_nft3,
+        ];
+        let user_nft_accounts = [
+            &ctx.accounts.user_nft_account0,
+            &ctx.accounts.user_nft_account1,
+            &ctx.accounts.user_nft_account2,
+            &ctx.accounts.user_nft_account3,
+        ];
+
+        for item in mint_nfts.into_iter().enumerate() {
+            let (i, mint_nft) = item;
+            let burn_cpi_accounts = Burn {
+                mint: mint_nft.to_account_info().clone(),
+                from: user_nft_accounts[i].to_account_info().clone(),
+                authority: ctx.accounts.payer.to_account_info(),
+            };
+    
+            token::burn(CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                burn_cpi_accounts,
+            ), 1);
+        }
 
         let cpi_accounts = Transfer {
             from: reward_vault.to_account_info(),
@@ -124,16 +146,6 @@ pub mod nftreceiver {
             authority: config.to_account_info(),
         };
 
-        let burn_cpi_accounts = Burn {
-            mint: ctx.accounts.mint_nft.to_account_info().clone(),
-            from: ctx.accounts.user_nft_account.to_account_info().clone(),
-            authority: ctx.accounts.payer.to_account_info(),
-        };
-
-        token::burn(CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            burn_cpi_accounts,
-        ), 4);
         // // TODO - should set reward_token amount
         // // transfer reward
         // panic!("rand: {}", rand);
@@ -371,14 +383,45 @@ pub struct BurnNfts<'info> {
     user_reward_account3: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
-    mint_nft: Box<Account<'info, Mint>>,
+    mint_nft0: Box<Account<'info, Mint>>,
+
+    #[account(mut)]
+    mint_nft1: Box<Account<'info, Mint>>,
+
+    #[account(mut)]
+    mint_nft2: Box<Account<'info, Mint>>,
+
+    #[account(mut)]
+    mint_nft3: Box<Account<'info, Mint>>,
 
     #[account(
         mut,
         token::mint=nfts[0].mint.key(),
         token::authority=payer,
     )]
-    user_nft_account: Box<Account<'info, TokenAccount>>,
+    user_nft_account0: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint=nfts[1].mint.key(),
+        token::authority=payer,
+    )]
+    user_nft_account1: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint=nfts[2].mint.key(),
+        token::authority=payer,
+    )]
+    user_nft_account2: Box<Account<'info, TokenAccount>>,
+
+
+    #[account(
+        mut,
+        token::mint=nfts[3].mint.key(),
+        token::authority=payer,
+    )]
+    user_nft_account3: Box<Account<'info, TokenAccount>>,
 
     system_program: Program<'info, System>,
     token_program: Program<'info, Token>,
