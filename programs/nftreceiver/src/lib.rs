@@ -106,9 +106,9 @@ pub mod nftreceiver {
 
         assert_eq!(reward_config.key(), _reward_config_pda);
         // transfer mana
-        deposit_mana(
+        burn_mana(
             ctx.accounts.user_mana_account.to_account_info(),
-            ctx.accounts.pda_mana_account.to_account_info(),
+            ctx.accounts.mint_mana.to_account_info(),
             ctx.accounts.payer.to_account_info(),
             reward_config.mana_cost,
             ctx.accounts.token_program.to_account_info(),
@@ -277,14 +277,9 @@ pub struct BurnNfts<'info> {
     config: Account<'info, Config>,
     #[account(mut)]
     payer: Signer<'info>,
-    #[account(
-        mut,
-        seeds=[b"mana-token", config.mana_token.key().as_ref()],
-        bump,
-        token::mint=config.mana_token,
-        token::authority=config,
-    )]
-    pda_mana_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    mint_mana: Account<'info, Mint>,
 
     #[account(
         mut,
@@ -415,7 +410,6 @@ pub struct BurnNfts<'info> {
     )]
     user_nft_account2: Box<Account<'info, TokenAccount>>,
 
-
     #[account(
         mut,
         token::mint=nfts[3].mint.key(),
@@ -468,29 +462,25 @@ pub struct NftData {
 
 
 
-fn deposit_mana<'info> (
+fn burn_mana<'info> (
     user_mana_account: AccountInfo<'info>,
-    mana_vault: AccountInfo<'info>,
+    mint_mana: AccountInfo<'info>,
     payer: AccountInfo<'info>,
     amount: u64,
     token_program: AccountInfo<'info>,
 
 ) -> Result<()> {
-    let cpi_accounts = Transfer {
-        from: user_mana_account.to_account_info(),
-        to: mana_vault.to_account_info(),
-        authority: payer,
+    let burn_cpi_accounts = Burn {
+        mint: mint_mana.to_account_info().clone(),
+        from: user_mana_account.to_account_info().clone(),
+        authority: payer.to_account_info(),
     };
-    // TODO - should set reward_token amount
-    // transfer reward
 
-    token::transfer(
-        CpiContext::new(
-            token_program.to_account_info().clone(), 
-            cpi_accounts,
-        ),
-        100
-    )?;
+    token::burn(CpiContext::new(
+        token_program.to_account_info(),
+        burn_cpi_accounts,
+    ), amount);
+
     Ok(())
 }
 

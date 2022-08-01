@@ -301,6 +301,7 @@ describe("nftreceiver", () => {
         mintNft1: mintNFTs[1],
         mintNft2: mintNFTs[2],
         mintNft3: mintNFTs[3],
+        mintMana: mintMana as anchor.web3.PublicKey,
         userNftAccount0: userNftAccounts[0],
         userNftAccount1: userNftAccounts[1],
         userNftAccount2: userNftAccounts[2],
