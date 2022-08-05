@@ -1,6 +1,8 @@
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
-use anchor_lang::prelude::*;
+use std::hash;
+
+use anchor_lang::{prelude::*, solana_program::blake3::hash};
 use anchor_spl::token::{ self, Transfer, Mint, Token, TokenAccount, Burn};
 
 #[program]
@@ -47,7 +49,6 @@ pub mod nftreceiver {
         let iter = nfts.iter();
         let mut flag = [0;12]; // 12 is mas color range
         let rarity = &nfts[0].rarity;
-        
         for (pos, nft) in iter.enumerate() {
             let (_wl_config_pda, _wl_config_bump) = Pubkey::find_program_address(
                 &[
@@ -66,9 +67,10 @@ pub mod nftreceiver {
             // assert rarity is same
             assert_eq!(rarity, &nft.rarity, "nft {} rarity is different", pos);
         }
-
+        
         // TODO - generate rand value from 0 - 3
-        let rand = get_random().unwrap();        
+        let rand = get_random(
+            ctx.accounts.clock.slot, ctx.accounts.clock.unix_timestamp as u64).unwrap();        
         // TODO - burn nft
 
         // get reward config of nft[rand]
@@ -146,8 +148,8 @@ pub mod nftreceiver {
             authority: config.to_account_info(),
         };
 
-        // // TODO - should set reward_token amount
-        // // transfer reward
+        // TODO - should set reward_token amount
+        // transfer reward
         // panic!("rand: {}", rand);
         token::transfer(
             CpiContext::new_with_signer(
@@ -419,7 +421,8 @@ pub struct BurnNfts<'info> {
 
     system_program: Program<'info, System>,
     token_program: Program<'info, Token>,
-    rent: Sysvar<'info, Rent>
+    rent: Sysvar<'info, Rent>,
+    clock: Sysvar<'info, Clock>,
 }
 
 #[account]
@@ -484,7 +487,11 @@ fn burn_mana<'info> (
     Ok(())
 }
 
-fn get_random() -> Result<usize> {
+fn get_random(seed0: u64, seed1: u64) -> Result<usize> {
     // NOTE - For the test scripts, let it bedeterministic.
-    Ok(0)
+    let hash_val0 = hash(&seed0.to_be_bytes());
+    let hash_val1 = hash(&seed1.to_be_bytes());
+
+    Ok((hash_val0.0[(hash_val1.0[1] as usize % hash_val0.0.len()) as usize] % 4u8 )as usize)
+
 }
